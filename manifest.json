@@ -1,0 +1,17 @@
+{
+  "name": "Lumo – Aventura Săritoare",
+  "short_name": "Lumo",
+  "description": "Platformer 2D: sari, adună monede și ajungi la steag!",
+  "lang": "ro",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#120a24",
+  "theme_color": "#1b1035",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
