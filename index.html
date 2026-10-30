@@ -26,6 +26,12 @@
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
+        // dacă avea deja o versiune veche, reîncarcă o dată când preia noul service worker
+        const hadController = !!navigator.serviceWorker.controller;
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (hadController && !reloaded) { reloaded = true; location.reload(); }
+        });
         navigator.serviceWorker.register('./sw.js').catch(() => {});
       });
     }

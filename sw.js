@@ -1,6 +1,6 @@
-// Service worker: cache-first pentru jocul offline.
+// Service worker: rețea întâi (ca să primești mereu ultima versiune), cache când ești offline.
 // Schimbă VERSION la fiecare release ca să se reîmprospăteze cache-ul.
-const VERSION = 'lumo-v3';
+const VERSION = 'lumo-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -12,7 +12,9 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' ocolește cache-ul HTTP, ca să nu salvăm o versiune veche
+  const reqs = ASSETS.map((u) => new Request(u, { cache: 'reload' }));
+  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(reqs)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -27,15 +29,14 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
   event.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((cached) => {
-      if (cached) return cached;
-      return fetch(req).then((res) => {
+    fetch(req, { cache: 'no-cache' })
+      .then((res) => {
         if (res.ok) {
           const copy = res.clone();
           caches.open(VERSION).then((cache) => cache.put(req, copy));
         }
         return res;
-      }).catch(() => caches.match('./index.html'));
-    })
+      })
+      .catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('./index.html')))
   );
 });
