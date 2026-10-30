@@ -35,6 +35,7 @@ const STORAGE_MUTE = 'lumo.mute';
 //   W  ladă           -  platformă (traversabilă de jos) ^  țepi
 //   o  monedă         e  Bumbo (gândac care patrulează) f  Zumzi (zburător)
 //   P  start jucător  K  punct de control              F  steag de final
+//   *  bloc-surpriză cu bere (Lumo crește mare)
 // ---------------------------------------------------------------------------
 const LEVELS = [
   {
@@ -48,7 +49,7 @@ const LEVELS = [
       "                   ooo                                                                                                                           F    ",
       "                                                                                                                oo                       ###          ",
       "                                                          BB?BB                                                ---                      ####          ",
-      "              ?   B?B?B       ooo     ooooo    ooo                      ooo      oooo              ooo     oo               ?B?        #####          ",
+      "              *   B?B?B       ooo     ooooo    ooo                      ooo      oooo              ooo     oo               *B?        #####          ",
       "                                #             -----               o             BBBBBB                    ---                         ######          ",
       "                               ##                                 W                                                                  #######          ",
       "   P    ooo              e    ###                      e     e              K       e     ^^  e                     e   e           ########          ",
@@ -67,7 +68,7 @@ const LEVELS = [
       "                                                                                                                                              f            F    ",
       "                                      f                                                                   f                              oo                     ",
       "                                                                                    f         oo                                        ----         ##         ",
-      "        B?B              oo    ooo                   ooo o ooo        ?B?B?                o  --                BB?BB  ooo          oo              ###         ",
+      "        B*B              oo    ooo                   ooo o ooo        ?B?B?                o  --                BB*BB  ooo          oo              ###         ",
       "                        ----   ---            BBBB   ---   ---                    ###      --                          ---         ----            ####         ",
       "                                                                                 #####                                                            #####         ",
       "   P    ooo   e     e                     ^^^  e                  K     e   e   ######              ^^  e   e                  K       e    e    ######         ",
@@ -86,7 +87,7 @@ const LEVELS = [
       "                                                      f                                                   f                                                      ###           ",
       "                                                                                                                                                f               ####           ",
       "                                         ooo     oo              oo               f          oo                      oo                                        #####           ",
-      "          ?B?      ooo         ooo              BBBB          oo   oo         ?       ooo    --       B?B?B                  ---          BBB                 ######           ",
+      "          *B?      ooo         ooo              BBBB          oo   oo         ?       ooo    --       B*B?B                  ---          BBB                 ######           ",
       "                                     e                       --- ##---                ---                        --- ##-- ooo                                #######           ",
       "                                   ######                        ##                       ###                        ##                                     ########           ",
       "   P    oo     e          e        ######           e   e        ##     K   ^^  e         ###       e   e   e        ##   ###      K    e     ^^^ e   e    #########           ",
@@ -219,6 +220,9 @@ const Sound = {
   oneUp() { [660, 880, 1100, 1320].forEach((f, i) => this.tone(f, 0.1, 'square', 0.22, 0, i * 0.08)); },
   check() { this.tone(660, 0.1, 'triangle', 0.4); this.tone(990, 0.2, 'triangle', 0.4, 0, 0.1); },
   flag()  { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone(f, 0.16, 'square', 0.22, 0, i * 0.12)); },
+  grow()  { [262, 330, 392, 523, 659, 784].forEach((f, i) => this.tone(f, 0.09, 'square', 0.22, 0, i * 0.06)); },
+  shrink() { [784, 587, 440, 330].forEach((f, i) => this.tone(f, 0.1, 'square', 0.22, 0, i * 0.07)); },
+  appear() { this.tone(200, 0.35, 'triangle', 0.4, 520); },
   over()  { [392, 330, 262, 196].forEach((f, i) => this.tone(f, 0.3, 'triangle', 0.45, 0, i * 0.22)); },
 };
 
@@ -349,12 +353,26 @@ let level = null;     // nivelul curent (date runtime)
 let player = null;
 let camX = 0;
 
-function freshPlayer(x, y) {
+// Dimensiuni Lumo: mic / mare (după bere)
+const SIZE_SMALL = { w: 20, h: 28 };
+const SIZE_BIG = { w: 26, h: 42 };
+
+function freshPlayer(x, y, big) {
+  const sz = big ? SIZE_BIG : SIZE_SMALL;
   return {
-    x, y, w: 20, h: 28, vx: 0, vy: 0,
+    x, y: y + SIZE_SMALL.h - sz.h, w: sz.w, h: sz.h, vx: 0, vy: 0, big: !!big, growT: 0,
     onGround: false, facing: 1, coyote: 0, jumpBuf: 0, jumping: false,
     invuln: 0, walk: 0, squash: 0, dead: false,
   };
+}
+
+function setBig(p, big) {
+  if (p.big === big) return;
+  const sz = big ? SIZE_BIG : SIZE_SMALL;
+  const cx = p.x + p.w / 2, bottom = p.y + p.h;
+  p.big = big; p.w = sz.w; p.h = sz.h;
+  p.x = cx - p.w / 2; p.y = bottom - p.h;
+  p.growT = 0.6;
 }
 
 function buildLevel(index) {
@@ -365,7 +383,7 @@ function buildLevel(index) {
     def, theme: THEMES[def.theme], width, rows,
     coins: [], enemies: [], bonus: [], checkpoints: [],
     flag: null, start: { x: 64, y: 256 }, respawn: null,
-    particles: [], popups: [], canvas: null,
+    particles: [], popups: [], items: [], canvas: null,
   };
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < width; x++) {
@@ -385,6 +403,7 @@ function buildLevel(index) {
           break;
         }
         case '?': lv.bonus.push({ tx: x, ty: y, used: false, bump: 0 }); break;
+        case '*': lv.bonus.push({ tx: x, ty: y, used: false, bump: 0, beer: true }); break;
         default: break;
       }
     }
@@ -401,7 +420,7 @@ function makeEnemy(type, x, y) {
     : { type, x, y, w: 24, h: 20, vx: -60, vy: 0, baseY: y, alive: true, dead: null, deadT: 0, anim: Math.random() * 6, x0: x };
 }
 
-function startLevel(index, keepRespawn) {
+function startLevel(index, keepRespawn, big = false) {
   const prev = level;
   if (!keepRespawn || !prev || prev.def !== LEVELS[index]) {
     level = buildLevel(index);
@@ -415,7 +434,7 @@ function startLevel(index, keepRespawn) {
   }
   game.levelIndex = index;
   game.time = level.def.time;
-  player = freshPlayer(level.respawn.x, level.respawn.y);
+  player = freshPlayer(level.respawn.x, level.respawn.y, big);
   camX = clamp(player.x - viewW * 0.35, 0, Math.max(0, level.width * T - viewW));
   game.state = 'playing';
   game.paused = false;
@@ -461,7 +480,7 @@ function saveBest() { save(STORAGE_BEST, game.best); }
 // ---------------------------------------------------------------------------
 // Dale & coliziuni
 // ---------------------------------------------------------------------------
-function isSolid(c) { return c === '#' || c === 'B' || c === '?' || c === 'W'; }
+function isSolid(c) { return c === '#' || c === 'B' || c === '?' || c === '*' || c === 'W'; }
 function tileAt(tx, ty) {
   if (tx < 0 || tx >= level.width) return '#';      // margini laterale solide
   if (ty < 0 || ty >= ROWS) return ' ';
@@ -512,13 +531,25 @@ function moveY(o, dt) {
 
 function hitBlockFromBelow(tx, ty) {
   const c = tileAt(tx, ty);
-  if (c === '?') {
+  if (c === '?' || c === '*') {
     const b = level.bonus.find((q) => q.tx === tx && q.ty === ty);
     if (b && !b.used) {
       b.used = true; b.bump = 0.15;
-      collectCoin(tx * T + T / 2, ty * T - 8, true);
-      addScore(50);
+      if (b.beer) {
+        // halba iese încet din bloc, apoi alunecă spre dreapta
+        level.items.push({ x: tx * T + 6, y: ty * T, w: 20, h: 24, vx: 0, vy: 0, rise: 24, blockTop: ty * T, onGround: false });
+        Sound.appear();
+      } else {
+        collectCoin(tx * T + T / 2, ty * T - 8, true);
+        addScore(50);
+      }
     } else Sound.bump();
+  } else if (c === 'B' && !player.big) {
+    // Lumo mic doar lovește cărămida; spargerea cere forma mare
+    Sound.bump();
+    for (let i = 0; i < 4; i++) {
+      level.particles.push({ x: tx * T + 6 + i * 6, y: ty * T + T, vx: (i - 1.5) * 40, vy: -60, life: 0.3, size: 3, color: level.theme.brickDark });
+    }
   } else if (c === 'B') {
     level.rows[ty][tx] = ' ';
     redrawTile(level, tx, ty);
@@ -632,12 +663,13 @@ function updatePlayer(dt, jumpEdge) {
   p.squash *= Math.pow(0.0005, dt);
   if (p.onGround && Math.abs(p.vx) > 10) p.walk += Math.abs(p.vx) * dt * 0.06;
   if (p.invuln > 0) p.invuln -= dt;
+  if (p.growT > 0) p.growT -= dt;
 
   // țepi
   const sx0 = Math.floor((p.x + 3) / T), sx1 = Math.floor((p.x + p.w - 3) / T);
   const sy = Math.floor((p.y + p.h - 1) / T);
   for (let tx = sx0; tx <= sx1; tx++) {
-    if (tileAt(tx, sy) === '^' && (p.y + p.h) > sy * T + 14) { loseLife(); return; }
+    if (tileAt(tx, sy) === '^' && (p.y + p.h) > sy * T + 14 && p.invuln <= 0) { hurtPlayer(true); if (game.state !== 'playing') return; break; }
   }
   // căzut în prăpastie
   if (p.y > VIEW_H + 40) { loseLife(); return; }
@@ -696,8 +728,8 @@ function updateEnemies(dt) {
         p.y = e.y - p.h;
         Sound.stomp();
       } else {
-        loseLife();
-        return;
+        hurtPlayer(false);
+        if (game.state !== 'playing') return;
       }
     }
   }
@@ -716,6 +748,28 @@ function updateItems(dt) {
     }
   }
   for (const b of level.bonus) if (b.bump > 0) b.bump -= dt;
+  const items = level.items;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.rise > 0) {
+      const d = Math.min(it.rise, 40 * dt);
+      it.rise -= d; it.y -= d;
+      if (it.rise <= 0) it.vx = 85;
+    } else {
+      it.vy = Math.min(it.vy + PHYS.gravity * dt, PHYS.maxFall);
+      const prevVx = it.vx;
+      if (moveX(it, dt)) it.vx = -prevVx;
+      moveY(it, dt);
+    }
+    if (it.y > VIEW_H + 40) { items.splice(i, 1); continue; }
+    if (it.rise <= 0 && overlap(p, it)) {
+      items.splice(i, 1);
+      if (!p.big) { setBig(p, true); Sound.grow(); }
+      else Sound.coin();
+      addScore(1000, it.x + 10, it.y);
+      level.popups.push({ x: it.x + 10, y: it.y - 16, text: 'NOROC!', life: 1.2 });
+    }
+  }
 }
 
 function updateParticles(dt) {
@@ -738,6 +792,17 @@ function updateCamera(dt) {
   const target = player.x + player.w / 2 - viewW * 0.4 + player.facing * 30;
   camX += (target - camX) * Math.min(1, dt * 6);
   camX = clamp(camX, 0, Math.max(0, level.width * T - viewW));
+}
+
+// Lovit: forma mare se micșorează (cu invulnerabilitate scurtă), forma mică pierde o viață.
+function hurtPlayer(spikes) {
+  const p = player;
+  if (!p.big) { loseLife(); return; }
+  setBig(p, false);
+  p.invuln = 2;
+  if (spikes) p.vy = -480;
+  Sound.shrink();
+  game.shake = 0.12;
 }
 
 function loseLife() {
@@ -799,7 +864,7 @@ function updateClear(dt) {
   if (game.timer <= 0) {
     if (game.levelIndex + 1 < LEVELS.length) {
       level = null;
-      startLevel(game.levelIndex + 1, false);
+      startLevel(game.levelIndex + 1, false, player.big);
     } else {
       game.state = 'win';
       game.timer = 0.8;
@@ -992,7 +1057,10 @@ function drawLumo(g, p, t) {
 
   g.save();
   g.translate(cx, by);
-  g.scale(p.facing * sx, sy);
+  // creștere/micșorare: clipește între cele două mărimi
+  let k = p.big ? 1.5 : 1;
+  if (p.growT > 0 && Math.floor(p.growT * 16) % 2) k = p.big ? 1 : 1.5;
+  g.scale(p.facing * sx * k, sy * k);
   if (p.dead) g.rotate(Math.sin(t * 20) * 0.2);
 
   // fular (flutură în spate)
@@ -1125,6 +1193,31 @@ function drawBonus(g, b, th, t) {
   g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(x + 14, y + 11, 3, 5);
 }
 
+// Halbă de bere: sticlă, bere aurie cu bule, spumă albă, toartă.
+function drawBeer(g, it, t) {
+  const x = it.x, y = it.y;
+  g.save();
+  if (it.rise > 0) { g.beginPath(); g.rect(x - 8, y - 6, it.w + 16, it.blockTop - (y - 6)); g.clip(); }
+  g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 3;
+  g.beginPath(); g.arc(x + 17, y + 13, 5, -Math.PI / 2, Math.PI / 2); g.stroke();
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(x, y + 4, 16, 20);
+  g.fillStyle = '#f2a516'; g.fillRect(x + 2, y + 7, 12, 15);
+  g.fillStyle = '#ffd04a'; g.fillRect(x + 3, y + 8, 3, 13);
+  g.fillStyle = 'rgba(255,255,255,0.8)';
+  for (let i = 0; i < 3; i++) {
+    const by = y + 20 - ((t * 18 + i * 5) % 12);
+    g.fillRect(x + 6 + i * 3, by, 2, 2);
+  }
+  g.fillStyle = '#ffffff';
+  g.beginPath();
+  g.ellipse(x + 4, y + 5, 5, 4, 0, 0, Math.PI * 2);
+  g.ellipse(x + 10, y + 3, 5, 5, 0, 0, Math.PI * 2);
+  g.ellipse(x + 15, y + 6, 3.5, 3.5, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillRect(x, y + 5, 16, 3);
+  g.restore();
+}
+
 function drawFlag(g, fl, t) {
   g.fillStyle = '#4a4a5a'; g.fillRect(fl.x + 2, fl.top, 4, fl.base - fl.top);
   g.fillStyle = '#ffd23f';
@@ -1184,6 +1277,8 @@ function render() {
   if (level.flag && level.flag.x > x0 - 60 && level.flag.x < x1) drawFlag(ctx, level.flag, t);
   for (const c of level.coins) if (c.x > x0 && c.x < x1) drawCoin(ctx, c.x, c.y, t, c.phase);
   for (const e of level.enemies) if (e.x > x0 && e.x < x1 && e.y < VIEW_H + 40) drawEnemy(ctx, e, t);
+
+  for (const it of level.items) if (it.x > x0 && it.x < x1) drawBeer(ctx, it, t);
 
   const p = player;
   if (!(p.invuln > 0 && Math.floor(t * 20) % 2)) drawLumo(ctx, p, t);

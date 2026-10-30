@@ -18,7 +18,8 @@ Adună monede, sari pe inamici (Bumbo și Zumzi) și atinge steagul de la final 
 | Sunet    | butonul 🔊 (sus-dreapta)         | M               |
 
 - Ține apăsat butonul de săritură ca să sari mai sus; o atingere scurtă = săritură mică.
-- Lovește de jos blocurile aurii (monede) și cărămizile (se sparg).
+- Lovește de jos blocurile aurii: unele dau monede, altele o **halbă de bere** 🍺.
+  Prinde-o și Lumo crește mare: poate sparge cărămizile, iar dacă e lovit se micșorează în loc să piardă o viață.
 - Evită țepii și prăpăstiile. Ai 3 vieți; la fiecare 50 de monede primești o viață în plus.
 - Steagurile mici sunt puncte de control. Cel mai bun scor se salvează local.
 
