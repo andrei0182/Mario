@@ -36,6 +36,7 @@ const STORAGE_MUTE = 'lumo.mute';
 //   o  monedă         e  Bumbo (gândac care patrulează) f  Zumzi (zburător)
 //   P  start jucător  K  punct de control              F  steag de final
 //   *  bloc-surpriză cu bere (Lumo crește mare)
+//   %  bloc-surpriză cu carne (Lumo aruncă cu mici)
 // ---------------------------------------------------------------------------
 const LEVELS = [
   {
@@ -48,7 +49,7 @@ const LEVELS = [
       "                                                                                                                                                      ",
       "                   ooo                                                                                                                           F    ",
       "                                                                                                                oo                       ###          ",
-      "                                                          BB?BB                                                ---                      ####          ",
+      "                                                          BB%BB                                                ---                      ####          ",
       "              *   B?B?B       ooo     ooooo    ooo                      ooo      oooo              ooo     oo               *B?        #####          ",
       "                                #             -----               o             BBBBBB                    ---                         ######          ",
       "                               ##                                 W                                                                  #######          ",
@@ -68,7 +69,7 @@ const LEVELS = [
       "                                                                                                                                              f            F    ",
       "                                      f                                                                   f                              oo                     ",
       "                                                                                    f         oo                                        ----         ##         ",
-      "        B*B              oo    ooo                   ooo o ooo        ?B?B?                o  --                BB*BB  ooo          oo              ###         ",
+      "        B*B              oo    ooo                   ooo o ooo        ?B%B?                o  --                BB*BB  ooo          oo              ###         ",
       "                        ----   ---            BBBB   ---   ---                    ###      --                          ---         ----            ####         ",
       "                                                                                 #####                                                            #####         ",
       "   P    ooo   e     e                     ^^^  e                  K     e   e   ######              ^^  e   e                  K       e    e    ######         ",
@@ -87,7 +88,7 @@ const LEVELS = [
       "                                                      f                                                   f                                                      ###           ",
       "                                                                                                                                                f               ####           ",
       "                                         ooo     oo              oo               f          oo                      oo                                        #####           ",
-      "          *B?      ooo         ooo              BBBB          oo   oo         ?       ooo    --       B*B?B                  ---          BBB                 ######           ",
+      "          *B?      ooo         ooo              BBBB          oo   oo         %       ooo    --       B*B?B                  ---          BBB                 ######           ",
       "                                     e                       --- ##---                ---                        --- ##-- ooo                                #######           ",
       "                                   ######                        ##                       ###                        ##                                     ########           ",
       "   P    oo     e          e        ######           e   e        ##     K   ^^  e         ###       e   e   e        ##   ###      K    e     ^^^ e   e    #########           ",
@@ -222,6 +223,7 @@ const Sound = {
   flag()  { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone(f, 0.16, 'square', 0.22, 0, i * 0.12)); },
   grow()  { [262, 330, 392, 523, 659, 784].forEach((f, i) => this.tone(f, 0.09, 'square', 0.22, 0, i * 0.06)); },
   shrink() { [784, 587, 440, 330].forEach((f, i) => this.tone(f, 0.1, 'square', 0.22, 0, i * 0.07)); },
+  sizzle() { this.noise(0.12, 0.18); this.tone(700, 0.1, 'square', 0.12, 300); },
   appear() { this.tone(200, 0.35, 'triangle', 0.4, 520); },
   over()  { [392, 330, 262, 196].forEach((f, i) => this.tone(f, 0.3, 'triangle', 0.45, 0, i * 0.22)); },
 };
@@ -229,16 +231,19 @@ const Sound = {
 // ---------------------------------------------------------------------------
 // Input: tastatură + touch (multi-touch prin Pointer Events)
 // ---------------------------------------------------------------------------
-const keys = { left: false, right: false, jump: false };
+const keys = { left: false, right: false, jump: false, fire: false };
 const pointers = new Map();     // pointerId -> zonă ('left' | 'right' | 'jump' | null)
-const input = { left: false, right: false, jump: false, jumpPressed: false };
-let prevJump = false;
+const input = { left: false, right: false, jump: false, fire: false };
+let prevJump = false, prevFire = false;
+// apăsările foarte scurte (sub un cadru) sunt reținute până la următorul update
+const queued = { jump: false, fire: false };
 let touchUI = matchMedia('(pointer: coarse)').matches;
 
 const buttons = {
   left:  { x: 0, y: 0, r: 40 },
   right: { x: 0, y: 0, r: 40 },
   jump:  { x: 0, y: 0, r: 50 },
+  fire:  { x: 0, y: 0, r: 36 },
   mute:  { x: 0, y: 0, r: 18 },
   pause: { x: 0, y: 0, r: 18 },
 };
@@ -247,6 +252,7 @@ function layoutButtons() {
   buttons.left.x = 62 + safe.l;   buttons.left.y = b;
   buttons.right.x = 160 + safe.l; buttons.right.y = b;
   buttons.jump.x = viewW - 76 - safe.r; buttons.jump.y = b - 6;
+  buttons.fire.x = buttons.jump.x - 104; buttons.fire.y = b + 8;
   buttons.mute.x = viewW - 30 - safe.r; buttons.mute.y = 26 + safe.t;
   buttons.pause.x = viewW - 72 - safe.r; buttons.pause.y = 26 + safe.t;
 }
@@ -265,15 +271,23 @@ function zoneFor(p) {
   const mid = (buttons.left.x + buttons.right.x) / 2;
   if (p.x < mid) return 'left';
   if (p.x < buttons.right.x + 70) return 'right';
-  if (p.x > viewW * 0.55) return 'jump';
+  if (p.x > viewW * 0.55) {
+    // butonul de aruncat mici există doar cât timp Lumo are puterea
+    if (canThrow()) {
+      const dj = Math.hypot(p.x - buttons.jump.x, p.y - buttons.jump.y);
+      const df = Math.hypot(p.x - buttons.fire.x, p.y - buttons.fire.y);
+      if (df < dj) return 'fire';
+    }
+    return 'jump';
+  }
   return null;
 }
 function refreshInput() {
-  let l = keys.left, r = keys.right, j = keys.jump;
+  let l = keys.left, r = keys.right, j = keys.jump, f = keys.fire;
   for (const z of pointers.values()) {
-    if (z === 'left') l = true; else if (z === 'right') r = true; else if (z === 'jump') j = true;
+    if (z === 'left') l = true; else if (z === 'right') r = true; else if (z === 'jump') j = true; else if (z === 'fire') f = true;
   }
-  input.left = l; input.right = r; input.jump = j;
+  input.left = l; input.right = r; input.jump = j; input.fire = f;
 }
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -285,7 +299,9 @@ canvas.addEventListener('pointerdown', (e) => {
   if (game.state === 'playing' && hitButton(buttons.pause, p, 8)) { game.paused = !game.paused; return; }
   if (game.paused) { game.paused = false; return; }
   if (onMenuAction()) return;
-  pointers.set(e.pointerId, zoneFor(p));
+  const z = zoneFor(p);
+  if (z === 'jump' || z === 'fire') queued[z] = true;
+  pointers.set(e.pointerId, z);
   refreshInput();
 }, { passive: false });
 canvas.addEventListener('pointermove', (e) => {
@@ -306,6 +322,7 @@ document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: fal
 const KEYMAP = {
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   Space: 'jump', ArrowUp: 'jump', KeyW: 'jump', KeyZ: 'jump',
+  KeyX: 'fire', KeyJ: 'fire', ShiftLeft: 'fire', ShiftRight: 'fire',
 };
 window.addEventListener('keydown', (e) => {
   Sound.unlock();
@@ -313,6 +330,7 @@ window.addEventListener('keydown', (e) => {
   if (k) {
     e.preventDefault();
     if (!e.repeat && k === 'jump' && onMenuAction()) return;
+    if (!e.repeat && (k === 'jump' || k === 'fire')) queued[k] = true;
     keys[k] = true; refreshInput();
   } else if (e.code === 'Enter') {
     onMenuAction();
@@ -327,7 +345,7 @@ window.addEventListener('keyup', (e) => {
   if (k) { keys[k] = false; refreshInput(); }
 });
 window.addEventListener('blur', () => {
-  keys.left = keys.right = keys.jump = false; pointers.clear(); refreshInput();
+  keys.left = keys.right = keys.jump = keys.fire = false; pointers.clear(); refreshInput();
 });
 
 // ---------------------------------------------------------------------------
@@ -361,6 +379,7 @@ function freshPlayer(x, y, big) {
   const sz = big ? SIZE_BIG : SIZE_SMALL;
   return {
     x, y: y + SIZE_SMALL.h - sz.h, w: sz.w, h: sz.h, vx: 0, vy: 0, big: !!big, growT: 0,
+    power: null, throwCd: 0,
     onGround: false, facing: 1, coyote: 0, jumpBuf: 0, jumping: false,
     invuln: 0, walk: 0, squash: 0, dead: false,
   };
@@ -383,7 +402,7 @@ function buildLevel(index) {
     def, theme: THEMES[def.theme], width, rows,
     coins: [], enemies: [], bonus: [], checkpoints: [],
     flag: null, start: { x: 64, y: 256 }, respawn: null,
-    particles: [], popups: [], items: [], canvas: null,
+    particles: [], popups: [], items: [], mici: [], canvas: null,
   };
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < width; x++) {
@@ -403,7 +422,8 @@ function buildLevel(index) {
           break;
         }
         case '?': lv.bonus.push({ tx: x, ty: y, used: false, bump: 0 }); break;
-        case '*': lv.bonus.push({ tx: x, ty: y, used: false, bump: 0, beer: true }); break;
+        case '*': lv.bonus.push({ tx: x, ty: y, used: false, bump: 0, item: 'beer' }); break;
+        case '%': lv.bonus.push({ tx: x, ty: y, used: false, bump: 0, item: 'meat' }); break;
         default: break;
       }
     }
@@ -480,7 +500,7 @@ function saveBest() { save(STORAGE_BEST, game.best); }
 // ---------------------------------------------------------------------------
 // Dale & coliziuni
 // ---------------------------------------------------------------------------
-function isSolid(c) { return c === '#' || c === 'B' || c === '?' || c === '*' || c === 'W'; }
+function isSolid(c) { return c === '#' || c === 'B' || c === '?' || c === '*' || c === '%' || c === 'W'; }
 function tileAt(tx, ty) {
   if (tx < 0 || tx >= level.width) return '#';      // margini laterale solide
   if (ty < 0 || ty >= ROWS) return ' ';
@@ -531,13 +551,13 @@ function moveY(o, dt) {
 
 function hitBlockFromBelow(tx, ty) {
   const c = tileAt(tx, ty);
-  if (c === '?' || c === '*') {
+  if (c === '?' || c === '*' || c === '%') {
     const b = level.bonus.find((q) => q.tx === tx && q.ty === ty);
     if (b && !b.used) {
       b.used = true; b.bump = 0.15;
-      if (b.beer) {
-        // halba iese încet din bloc, apoi alunecă spre dreapta
-        level.items.push({ x: tx * T + 6, y: ty * T, w: 20, h: 24, vx: 0, vy: 0, rise: 24, blockTop: ty * T, onGround: false });
+      if (b.item) {
+        // obiectul iese încet din bloc, apoi alunecă spre dreapta (carnea mai încet)
+        level.items.push({ kind: b.item, x: tx * T + 6, y: ty * T, w: 20, h: 24, vx: 0, vy: 0, rise: 24, blockTop: ty * T, onGround: false });
         Sound.appear();
       } else {
         collectCoin(tx * T + T / 2, ty * T - 8, true);
@@ -596,8 +616,11 @@ function update(dt) {
   if (game.timer > 0) game.timer -= dt;
   if (game.shake > 0) game.shake -= dt;
 
-  const jumpEdge = input.jump && !prevJump;
+  const jumpEdge = (input.jump && !prevJump) || queued.jump;
   prevJump = input.jump;
+  const fireEdge = (input.fire && !prevFire) || queued.fire;
+  prevFire = input.fire;
+  queued.jump = queued.fire = false;
 
   if (game.state === 'start' || game.state === 'gameover' || game.state === 'win') return;
   if (game.paused || isPortraitBlocked()) return;
@@ -619,14 +642,57 @@ function update(dt) {
   game.time -= dt;
   if (game.time <= 0) { game.time = 0; loseLife(); return; }
 
-  updatePlayer(dt, jumpEdge);
+  updatePlayer(dt, jumpEdge, fireEdge);
+  updateMici(dt);
   updateEnemies(dt);
   updateItems(dt);
   updateCamera(dt);
 }
 
-function updatePlayer(dt, jumpEdge) {
+function canThrow() {
+  return !!player && player.power === 'mici' && game.state === 'playing';
+}
+
+function throwMici(p) {
+  if (level.mici.length >= 2 || p.throwCd > 0) return;
+  p.throwCd = 0.25;
+  level.mici.push({
+    x: p.facing > 0 ? p.x + p.w : p.x - 14, y: p.y + p.h * 0.4, w: 14, h: 8,
+    vx: p.facing * 340 + p.vx * 0.3, vy: 80, onGround: false, life: 2.5, spin: 0,
+  });
+  Sound.sizzle();
+}
+
+function smoke(x, y) {
+  for (let k = 0; k < 5; k++) {
+    level.particles.push({ x: x + (k - 2) * 3, y, vx: (k - 2) * 30, vy: -120 - k * 20, life: 0.3, size: 4, color: 'rgba(230,230,230,0.8)' });
+  }
+}
+
+// Mici aruncați: sar pe jos, se opresc în pereți, doboară inamicii.
+function updateMici(dt) {
+  const list = level.mici;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    m.life -= dt; m.spin += dt * 18 * Math.sign(m.vx);
+    m.vy = Math.min(m.vy + PHYS.gravity * 0.75 * dt, PHYS.maxFall);
+    const hitWall = moveX(m, dt);
+    moveY(m, dt);
+    if (m.onGround) m.vy = -300;
+    let gone = hitWall || m.life <= 0 || m.y > VIEW_H + 20 || m.x < camX - 40 || m.x > camX + viewW + 40;
+    if (!gone) {
+      for (const e of level.enemies) {
+        if (e.alive && overlap(m, e)) { killEnemy(e, true); Sound.stomp(); gone = true; break; }
+      }
+    }
+    if (gone) { smoke(m.x + 7, m.y); list.splice(i, 1); }
+  }
+}
+
+function updatePlayer(dt, jumpEdge, fireEdge) {
   const p = player;
+  if (p.throwCd > 0) p.throwCd -= dt;
+  if (fireEdge && p.power === 'mici') throwMici(p);
   const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   const accel = p.onGround ? PHYS.accelGround : PHYS.accelAir;
   if (dir !== 0) {
@@ -754,7 +820,7 @@ function updateItems(dt) {
     if (it.rise > 0) {
       const d = Math.min(it.rise, 40 * dt);
       it.rise -= d; it.y -= d;
-      if (it.rise <= 0) it.vx = 85;
+      if (it.rise <= 0) it.vx = it.kind === 'meat' ? 55 : 85;
     } else {
       it.vy = Math.min(it.vy + PHYS.gravity * dt, PHYS.maxFall);
       const prevVx = it.vx;
@@ -765,9 +831,11 @@ function updateItems(dt) {
     if (it.rise <= 0 && overlap(p, it)) {
       items.splice(i, 1);
       if (!p.big) { setBig(p, true); Sound.grow(); }
+      else if (it.kind === 'meat' && p.power !== 'mici') { p.growT = 0.6; Sound.grow(); }
       else Sound.coin();
+      if (it.kind === 'meat') p.power = 'mici';
       addScore(1000, it.x + 10, it.y);
-      level.popups.push({ x: it.x + 10, y: it.y - 16, text: 'NOROC!', life: 1.2 });
+      level.popups.push({ x: it.x + 10, y: it.y - 16, text: it.kind === 'meat' ? 'MICI LA GRĂTAR!' : 'NOROC!', life: 1.2 });
     }
   }
 }
@@ -799,6 +867,7 @@ function hurtPlayer(spikes) {
   const p = player;
   if (!p.big) { loseLife(); return; }
   setBig(p, false);
+  p.power = null;
   p.invuln = 2;
   if (spikes) p.vy = -480;
   Sound.shrink();
@@ -864,7 +933,9 @@ function updateClear(dt) {
   if (game.timer <= 0) {
     if (game.levelIndex + 1 < LEVELS.length) {
       level = null;
+      const power = player.power;
       startLevel(game.levelIndex + 1, false, player.big);
+      player.power = power;
     } else {
       game.state = 'win';
       game.timer = 0.8;
@@ -1065,7 +1136,8 @@ function drawLumo(g, p, t) {
 
   // fular (flutură în spate)
   const wave = Math.sin(t * 14) * 3;
-  g.fillStyle = '#ff7a2e';
+  const chef = p.power === 'mici';      // cu puterea micilor fularul devine roșu
+  g.fillStyle = chef ? '#d62828' : '#ff7a2e';
   g.beginPath();
   g.moveTo(-6, -16); g.lineTo(-17, -15 + wave); g.lineTo(-18, -10 + wave); g.lineTo(-6, -11);
   g.fill();
@@ -1085,8 +1157,8 @@ function drawLumo(g, p, t) {
   g.beginPath(); g.ellipse(2, -11, 6, 5, 0, 0, Math.PI * 2); g.fill();
 
   // fular (față)
-  g.fillStyle = '#ff7a2e'; g.fillRect(-9, -15, 18, 4);
-  g.fillStyle = '#ffb36b'; g.fillRect(-9, -15, 18, 1);
+  g.fillStyle = chef ? '#d62828' : '#ff7a2e'; g.fillRect(-9, -15, 18, 4);
+  g.fillStyle = chef ? '#ff8a8a' : '#ffb36b'; g.fillRect(-9, -15, 18, 1);
 
   // ochi
   g.fillStyle = '#fff';
@@ -1218,6 +1290,39 @@ function drawBeer(g, it, t) {
   g.restore();
 }
 
+// Bucată de carne (friptură cu os).
+function drawMeat(g, it, t) {
+  const x = it.x, y = it.y;
+  g.save();
+  if (it.rise > 0) { g.beginPath(); g.rect(x - 8, y - 6, it.w + 16, it.blockTop - (y - 6)); g.clip(); }
+  g.fillStyle = '#f4efe6';
+  g.fillRect(x + 13, y + 14, 9, 4);
+  g.beginPath(); g.arc(x + 22, y + 14, 3, 0, Math.PI * 2); g.arc(x + 22, y + 18, 3, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#fff3e0';
+  g.beginPath(); g.ellipse(x + 9, y + 14, 11, 9, -0.2, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#b5322b';
+  g.beginPath(); g.ellipse(x + 9, y + 14, 9, 7, -0.2, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#e0605a';
+  g.beginPath(); g.ellipse(x + 6, y + 12, 4, 2.5, -0.2, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#7a1d18'; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(x + 3, y + 17); g.lineTo(x + 14, y + 11); g.moveTo(x + 5, y + 20); g.lineTo(x + 15, y + 15); g.stroke();
+  g.restore();
+}
+
+// Un mic la grătar, rotindu-se în aer.
+function drawMic(g, cx, cy, spin) {
+  g.save();
+  g.translate(cx, cy);
+  g.rotate(spin);
+  g.fillStyle = '#7a3e1d';
+  g.beginPath();
+  if (g.roundRect) g.roundRect(-7, -3.5, 14, 7, 3.5); else g.rect(-7, -3.5, 14, 7);
+  g.fill();
+  g.fillStyle = '#a65a2e'; g.fillRect(-5, -2.5, 10, 2);
+  g.fillStyle = '#3d1d0c'; g.fillRect(-3, -3.5, 1.5, 7); g.fillRect(1.5, -3.5, 1.5, 7);
+  g.restore();
+}
+
 function drawFlag(g, fl, t) {
   g.fillStyle = '#4a4a5a'; g.fillRect(fl.x + 2, fl.top, 4, fl.base - fl.top);
   g.fillStyle = '#ffd23f';
@@ -1278,7 +1383,8 @@ function render() {
   for (const c of level.coins) if (c.x > x0 && c.x < x1) drawCoin(ctx, c.x, c.y, t, c.phase);
   for (const e of level.enemies) if (e.x > x0 && e.x < x1 && e.y < VIEW_H + 40) drawEnemy(ctx, e, t);
 
-  for (const it of level.items) if (it.x > x0 && it.x < x1) drawBeer(ctx, it, t);
+  for (const it of level.items) if (it.x > x0 && it.x < x1) (it.kind === 'meat' ? drawMeat : drawBeer)(ctx, it, t);
+  for (const m of level.mici) drawMic(ctx, m.x + m.w / 2, m.y + m.h / 2, m.spin);
 
   const p = player;
   if (!(p.invuln > 0 && Math.floor(t * 20) % 2)) drawLumo(ctx, p, t);
@@ -1349,6 +1455,10 @@ function drawHUD() {
   // monede
   drawCoin(ctx, l, top + 14, 0, 0);
   text('× ' + game.coins, l + 22, top + 25, 15);
+  if (player && player.power === 'mici') {
+    drawMic(ctx, l + 82, top + 25, -0.3);
+    text(touchUI ? 'MICI' : 'MICI (X)', l + 94, top + 25, 12, '#ffb36b');
+  }
   // scor
   text('SCOR ' + String(game.score).padStart(6, '0'), viewW / 2, top - 2, 16, '#fff', 'center');
   text('RECORD ' + String(game.best).padStart(6, '0'), viewW / 2, top + 17, 11, '#ffe28a', 'center');
@@ -1423,6 +1533,12 @@ function drawTouchControls() {
   ctx.lineTo(J.x + 6, J.y + 14); ctx.lineTo(J.x - 6, J.y + 14); ctx.lineTo(J.x - 6, J.y + 2);
   ctx.lineTo(J.x - 16, J.y + 2);
   ctx.fill();
+  if (canThrow()) {
+    const F = buttons.fire;
+    roundBtn(F, input.fire);
+    drawMic(ctx, F.x - 5, F.y - 6, -0.4);
+    drawMic(ctx, F.x + 4, F.y + 6, -0.4);
+  }
 }
 
 // fundal animat pentru meniu (fără nivel încărcat)
@@ -1463,7 +1579,7 @@ function drawOverlay() {
     text('RECORD: ' + game.best, cx, 162, 16, '#ffe28a', 'center');
     if (blink) text(prompt + ' pentru a începe', cx, 210, 18, '#fff', 'center');
     text(touchUI ? '◀ ▶ mers   •   ⤒ săritură (ține apăsat = mai sus)'
-                 : '← → mers   •   SPAȚIU săritură   •   M sunet   •   P pauză', cx, VIEW_H - 22, 13, '#fff', 'center', '600');
+                 : '← → mers   •   SPAȚIU săritură   •   X aruncă mici   •   M sunet   •   P pauză', cx, VIEW_H - 22, 13, '#fff', 'center', '600');
     drawMuteButton();
     return;
   }

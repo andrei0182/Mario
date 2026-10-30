@@ -1,6 +1,6 @@
 // Service worker: cache-first pentru jocul offline.
 // Schimbă VERSION la fiecare release ca să se reîmprospăteze cache-ul.
-const VERSION = 'lumo-v2';
+const VERSION = 'lumo-v3';
 const ASSETS = [
   './',
   './index.html',
