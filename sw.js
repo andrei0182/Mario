@@ -1,6 +1,6 @@
 // Service worker: rețea întâi (ca să primești mereu ultima versiune), cache când ești offline.
 // Schimbă VERSION la fiecare release ca să se reîmprospăteze cache-ul.
-const VERSION = 'lumo-v4';
+const VERSION = 'lumo-v5';
 const ASSETS = [
   './',
   './index.html',

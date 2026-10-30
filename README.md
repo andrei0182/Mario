@@ -25,6 +25,7 @@ Adună monede, sari pe inamici (Bumbo și Zumzi) și atinge steagul de la final 
   (butonul cu mici de lângă săritură, sau tasta X pe PC). Dacă e lovit, pierde puterea.
 - Evită țepii și prăpăstiile. Ai 3 vieți; la fiecare 50 de monede primești o viață în plus.
 - Steagurile mici sunt puncte de control. Cel mai bun scor se salvează local.
+- Fiecare nivel are propria temă muzicală originală, sintetizată din cod (butonul 🔊 oprește tot sunetul).
 
 ## Instalare pe telefon (PWA)
 

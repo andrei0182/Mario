@@ -229,6 +229,211 @@ const Sound = {
 };
 
 // ---------------------------------------------------------------------------
+// Muzică de fundal: teme originale, sintetizate și planificate cu Web Audio.
+// Note: string-uri de 8 optimi pe măsură; "_" = ține nota, "." = pauză.
+// Tobe/bas: 16 șaisprezecimi pe măsură; "x" = lovește, "o" = bas cu o octavă sus.
+// ---------------------------------------------------------------------------
+const SONGS = {
+  meadow: {
+    bpm: 100, vol: 0.55,
+    chords: [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]],   // Am F C G
+    bass: [45, 41, 48, 43],
+    bassPat: 'x..xx.o.x..xx.o.',
+    arp: 8,
+    melody: [
+      'E5 _ A5 _ G5 E5 D5 C5', 'C5 _ A4 _ C5 D5 E5 _', 'G5 _ E5 _ D5 C5 D5 E5', 'D5 _ _ _ B4 _ . .',
+      'E5 _ A5 _ B5 A5 G5 E5', 'F5 _ E5 _ C5 _ A4 C5', 'E5 _ D5 C5 D5 _ E5 G5', 'A5 _ _ _ G5 _ _ _',
+    ],
+    drums: { k: 'x.......x.x.....', s: '....x.......x...', h: '..x...x...x...x.' },
+  },
+  cave: {
+    bpm: 84, vol: 0.6, echo: true,
+    chords: [[50, 53, 57], [46, 50, 53], [43, 46, 50], [45, 49, 52]],   // Dm Bb Gm A
+    bass: [50, 46, 43, 45],
+    bassPat: 'x.......x...o...',
+    arp: 16,
+    melody: [
+      'D5 _ _ F5 E5 _ D5 _', '. . F5 _ D5 _ _ _', 'G5 _ F5 _ D5 _ Bb4 _', 'A4 _ _ _ C#5 _ E5 _',
+      'F5 _ E5 D5 A5 _ _ _', 'G5 _ F5 _ D5 _ _ _', 'Bb4 _ D5 _ G5 _ F5 E5', 'E5 _ _ _ . . . .',
+    ],
+    drums: { k: 'x...........x...', s: '................', h: '......x.......x.' },
+  },
+  sky: {
+    bpm: 124, vol: 0.62,
+    chords: [[52, 55, 59], [48, 52, 55], [50, 55, 59], [50, 54, 57]],   // Em C G D
+    bass: [52, 48, 43, 50],
+    bassPat: 'x.xox.xox.xox.xo',
+    arp: 8,
+    melody: [
+      'B4 _ E5 _ G5 _ F#5 E5', 'G5 _ _ E5 C5 _ E5 _', 'D5 _ G5 _ B5 _ A5 G5', 'F#5 _ _ _ A5 _ F#5 _',
+      'G5 _ B5 _ E6 _ D6 B5', 'C6 _ B5 _ G5 _ E5 _', 'D5 _ G5 _ A5 B5 A5 G5', 'F#5 _ _ _ D5 _ F#5 _',
+    ],
+    drums: { k: 'x.....x.x.....x.', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.' },
+  },
+};
+
+const NOTE_INDEX = { C: 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3, E: 4, F: 5, 'F#': 6, Gb: 6, G: 7, 'G#': 8, Ab: 8, A: 9, 'A#': 10, Bb: 10, B: 11 };
+function noteToMidi(n) {
+  const m = /^([A-G][#b]?)(\d)$/.exec(n);
+  return m ? NOTE_INDEX[m[1]] + (parseInt(m[2], 10) + 1) * 12 : null;
+}
+const midiFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+// Pre-procesează melodiile: pentru fiecare optime -> { midi, len (în optimi) } sau null.
+for (const song of Object.values(SONGS)) {
+  song.notes = song.melody.map((bar) => {
+    const tok = bar.split(/\s+/);
+    const out = new Array(8).fill(null);
+    for (let i = 0; i < 8; i++) {
+      const midi = noteToMidi(tok[i]);
+      if (midi === null) continue;
+      let len = 1;
+      while (i + len < 8 && tok[i + len] === '_') len++;
+      out[i] = { midi, len };
+    }
+    return out;
+  });
+}
+
+const Music = {
+  name: null, song: null, timer: 0, step: 0, nextTime: 0, bus: null, echoBus: null, noiseBuf: null,
+  setup() {
+    const ac = Sound.ctx;
+    if (this.bus || !ac) return;
+    this.bus = ac.createGain();
+    this.bus.connect(Sound.master);
+    // ecou pentru peșteră
+    this.echoBus = ac.createGain();
+    const delay = ac.createDelay(1);
+    delay.delayTime.value = 0.36;
+    const fb = ac.createGain(); fb.gain.value = 0.38;
+    const wet = ac.createGain(); wet.gain.value = 0.45;
+    this.echoBus.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(this.bus);
+    this.echoBus.connect(this.bus);
+    const len = Math.floor(ac.sampleRate * 0.3);
+    this.noiseBuf = ac.createBuffer(1, len, ac.sampleRate);
+    const d = this.noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  },
+  // Pornește (sau continuă de unde a rămas) tema cerută; null oprește muzica.
+  play(name) {
+    if (name === this.name && this.timer) return;
+    if (!name) { this.pause(); return; }
+    if (!Sound.ctx) return;
+    this.setup();
+    if (name !== this.name) { this.step = 0; }
+    this.name = name;
+    this.song = SONGS[name];
+    this.bus.gain.value = this.song.vol;
+    this.nextTime = Sound.ctx.currentTime + 0.08;
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.tick(), 25);
+  },
+  pause() {
+    clearInterval(this.timer);
+    this.timer = 0;
+  },
+  stop() {
+    this.pause();
+    this.name = null;
+  },
+  tick() {
+    const ac = Sound.ctx;
+    if (!ac || ac.state !== 'running') return;
+    if (this.nextTime < ac.currentTime - 0.2) this.nextTime = ac.currentTime + 0.05; // după o întrerupere
+    const sixteenth = 60 / this.song.bpm / 4;
+    while (this.nextTime < ac.currentTime + 0.12) {
+      this.playStep(this.step, this.nextTime, sixteenth);
+      this.nextTime += sixteenth;
+      this.step++;
+    }
+  },
+  playStep(step, t, sx) {
+    const song = this.song;
+    const bars = song.notes.length;
+    const bar = Math.floor(step / 16) % bars;
+    const s = step % 16;
+    const ci = bar % song.chords.length;
+    const chord = song.chords[ci];
+    const target = song.echo ? this.echoBus : this.bus;
+
+    const b = song.bassPat[s];
+    if (b === 'x' || b === 'o') this.voice('triangle', midiFreq(song.bass[ci] - 12 + (b === 'o' ? 12 : 0)), t, sx * 1.8, 0.5, this.bus);
+    if (b === 'x' || b === 'o') this.voice('square', midiFreq(song.bass[ci] - 12 + (b === 'o' ? 12 : 0)), t, sx * 1.2, 0.06, this.bus, 600);
+
+    if (song.arp === 16 || s % 2 === 0) {
+      const k = song.arp === 16 ? s : s / 2;
+      const n = chord[[0, 1, 2, 1][k % 4]] + 12;
+      this.voice('triangle', midiFreq(n), t, sx * 1.5, song.echo ? 0.09 : 0.07, target);
+    }
+    if (s === 0) for (const n of chord) this.voice('sawtooth', midiFreq(n), t, sx * 15, 0.025, this.bus, 900, 0.25);
+
+    if (s % 2 === 0) {
+      const note = song.notes[bar][s / 2];
+      if (note) {
+        const dur = note.len * sx * 2 * 0.92;
+        this.voice('square', midiFreq(note.midi), t, dur, 0.11, target, 2600);
+        this.voice('triangle', midiFreq(note.midi), t, dur, 0.12, target);
+      }
+    }
+
+    const dr = song.drums;
+    if (dr.k[s] === 'x') this.kick(t);
+    if (dr.s[s] === 'x') this.hit(t, 0.14, 1800, 0.22, 'bandpass');
+    if (dr.h[s] === 'x') this.hit(t, 0.04, 7000, song.echo ? 0.05 : 0.08, 'highpass');
+  },
+  voice(type, freq, t, dur, vol, dest, lowpass, attack = 0.008) {
+    const ac = Sound.ctx;
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + attack);
+    g.gain.setValueAtTime(vol, t + Math.max(attack, dur - 0.05));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.08);
+    let node = o;
+    if (lowpass) {
+      const f = ac.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.value = lowpass;
+      o.connect(f); node = f;
+    }
+    node.connect(g); g.connect(dest);
+    o.start(t); o.stop(t + dur + 0.1);
+  },
+  kick(t) {
+    const ac = Sound.ctx;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(130, t);
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g); g.connect(this.bus);
+    o.start(t); o.stop(t + 0.2);
+  },
+  hit(t, dur, freq, vol, type) {
+    const ac = Sound.ctx;
+    const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    src.buffer = this.noiseBuf;
+    f.type = type; f.frequency.value = freq;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f); f.connect(g); g.connect(this.bus);
+    src.start(t); src.stop(t + dur + 0.02);
+  },
+};
+
+// Ce temă ar trebui să se audă acum, în funcție de starea jocului.
+function syncMusic() {
+  let want = null;
+  if (game.state === 'start') want = 'meadow';
+  else if (game.state === 'playing' && !game.paused && !isPortraitBlocked() && level) want = level.def.theme;
+  if (want !== Music.name || !Music.timer) {
+    if (want) Music.play(want); else Music.pause();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Input: tastatură + touch (multi-touch prin Pointer Events)
 // ---------------------------------------------------------------------------
 const keys = { left: false, right: false, jump: false, fire: false };
@@ -1622,6 +1827,7 @@ function frame(now) {
   let steps = 0;
   while (acc >= STEP && steps < 12) { update(STEP); acc -= STEP; steps++; }
   if (steps === 12) acc = 0;
+  syncMusic();
   render();
   if (showFps) text(game.fps + ' FPS', 8 + safe.l, VIEW_H - 12, 12, '#0f0', 'left');
 }
@@ -1637,7 +1843,7 @@ document.addEventListener('visibilitychange', () => {
 
 const showFps = /[?&]fps/.test(location.search);
 // expus pentru teste automate / depanare
-window.__lumo = { game, get player() { return player; }, get level() { return level; }, startLevel, LEVELS };
+window.__lumo = { game, get player() { return player; }, get level() { return level; }, startLevel, LEVELS, Music, Sound, SONGS };
 
 resize();
 requestAnimationFrame(frame);
